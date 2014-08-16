@@ -179,13 +179,36 @@ set1Challenge4 = do
 	BSC.putStrLn $ getAnalyzedStringSentence finalSentence
 	putStr "Decrypted with key: "
 	BSC.putStrLn $ getAnalyzedStringKey finalSentence
+	putStrLn ""
+
+
+set1Challenge5String = "Burning 'em, if you ain't quick and nimble\n\ 
+\I go crazy when I hear a cymbal"
+set1Challenge5Key = "ICE"
+
+getStringXoredWithRepeatedKey message repeatString = xoredString
+	where
+		xoredString = xorTwoByteStrings message createdXorKey
+		createdXorKey = (BS.cycle repeatString)
+
+set1Challenge5 = do
+	let encryptedMessage = B16.encode $ getStringXoredWithRepeatedKey set1Challenge5String set1Challenge5Key
+	putStrLn "Matasano Set 1 Challenge 5."
+	putStr "Original Mesage: " 
+	BSC.putStrLn $ set1Challenge5String
+	putStr "Encryption key: " 
+	BSC.putStrLn $ set1Challenge5Key
+	putStrLn "Encrypted Message: "
+	BSC.putStrLn $ encryptedMessage
+	putStrLn ""
 
 
 main = do
 	set1Challenge1
 	set1Challenge2
 	set1Challenge3
-	set1Challenge4
+	--set1Challenge4
+	set1Challenge5
 
 
 
