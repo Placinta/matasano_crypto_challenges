@@ -22,6 +22,7 @@ import Control.Lens
 import Data.Int
 import Data.Monoid
 import qualified Data.List as L
+import qualified Codec.Crypto.AES as AES
 
 set1Challenge1HexString = "49276d206b696c6c696e6720796f757220627261696e206c696b65206120706f69736f6e6f7573206d757368726f6f6d"
 base64Table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -281,6 +282,21 @@ set1Challenge6 = do
 	BSC.putStrLn $ decipheredText
 	putStrLn ""
 
+set1Challenge7Key = "YELLOW SUBMARINE"
+
+set1Challenge7 = do
+	fileContents <- BS.readFile "7.txt"
+	let cipher = B64.decodeLenient fileContents
+	let strictKey = BS.toStrict set1Challenge7Key
+	let plainText = AES.crypt AES.ECB strictKey strictKey AES.Decrypt cipher
+
+	putStrLn "Matasano Set 1 Challenge 7."
+	putStr "Encryption key: " 
+	BSC.putStrLn $ set1Challenge7Key
+	putStrLn "Decrypted Message: "
+	BSC.putStrLn $ plainText
+	putStrLn ""
+
 
 main = do
 	set1Challenge1
@@ -289,6 +305,7 @@ main = do
 	set1Challenge4
 	set1Challenge5
 	set1Challenge6
+	set1Challenge7
 
 
 
