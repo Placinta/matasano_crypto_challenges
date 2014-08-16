@@ -1,6 +1,7 @@
-{-# LANGUAGE OverloadedStrings, BangPatterns #-}
+{-# LANGUAGE OverloadedStrings, BangPatterns, ViewPatterns #-}
 
 import qualified Data.ByteString.Lazy as BS
+import qualified Data.ByteString.Builder as BB
 import qualified Data.ByteString.Internal as BS (c2w, w2c)
 import qualified Data.ByteString.Lazy.Char8 as BSC
 import qualified Data.ByteString.Base16.Lazy as B16
@@ -15,6 +16,12 @@ import Data.List (maximumBy, minimumBy)
 import Data.Function (on)
 import Debug.Trace
 import System.IO
+import qualified Data.ByteString.Lazy.Lens as BS
+import qualified Data.Bits.Lens as BL
+import Control.Lens
+import Data.Int
+import Data.Monoid
+import qualified Data.List as L
 
 set1Challenge1HexString = "49276d206b696c6c696e6720796f757220627261696e206c696b65206120706f69736f6e6f7573206d757368726f6f6d"
 base64Table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -203,12 +210,85 @@ set1Challenge5 = do
 	putStrLn ""
 
 
+set1Challenge6String1 = "this is a test"
+set1Challenge6String2 = "wokka wokka!!!"
+
+-- Given a ByteString, returns a list of Bool values corresponding to the set bits in the bytestring.
+bitsOfByteString s = concat $ map (toListOf BL.bits) (s^.BS.unpackedBytes)
+
+-- Computes the bit Hamming distance between two ByteStrings.
+bitBSHammingDistance s1 s2 = foldr (\(a, b) acc -> acc + (if a == b then 0 else 1)) 0 newList
+	where
+		s1Bits = bitsOfByteString s1
+		s2Bits = bitsOfByteString s2
+		newList = zip s1Bits s2Bits
+
+-- Given a ByteString and a key size, will compute the normalized edit distance
+-- of the first four chunks of KeySize length.
+keySizeEditDistanceNormalizer contents size = (size, (fromIntegral dist) / (fromIntegral size) / 6)
+	where 
+		(a, r1) = BS.splitAt size contents
+		(b, r2) = BS.splitAt size r1
+		(c, r3) = BS.splitAt size r2
+		(d, _) = BS.splitAt size r3
+		d1 = bitBSHammingDistance a b
+		d2 = bitBSHammingDistance a c
+		d3 = bitBSHammingDistance a d
+		d4 = bitBSHammingDistance b c
+		d5 = bitBSHammingDistance b d
+		d6 = bitBSHammingDistance c d
+		dist = d1 + d2 + d3 + d4 + d5 + d6
+
+-- Splits a ByteString into Chunks of a given size.
+chunksOfBS n string = helper n string []
+	where 
+		helper n (BS.uncons -> Nothing) acc = acc
+		helper n ss acc = helper n (BS.drop n ss) (acc ++ [BS.take n ss]) 
+
+-- Given a list of original ByteStrings, it creates a transposed list of ByteStrings
+-- where the first ByteString is composed of the first letters of all the original strings,
+-- the second ByteString is composed of the second letters of all the original strings,
+-- and so on.
+transposeBlocks keySize blocks = map singleBlockBuilder [0..keySize]
+	where 
+		singleBlockBuilder index = BB.toLazyByteString $ foldr (transposeBuilder index) mempty blocks
+		transposeBuilder i string builder = if i >= BS.length string then builder else builder `mappend` (BB.word8 (BS.index string i))
+
+-- Returns the head of a bytestring, but making sure that the bytestring is not empty.
+-- In case it's empty, return a 0.
+keyConstructor analyzed = headChecker
+	where 
+		keyString = getAnalyzedStringKey analyzed
+		headChecker = if BS.null keyString then 0 else BS.head keyString
+
+set1Challenge6 = do
+	fileContents <- BS.readFile "6.txt"
+	let cipher = B64.decodeLenient fileContents
+	let keySizes = [2..40]
+	let normalizedDistances = map (keySizeEditDistanceNormalizer cipher) keySizes
+	let bestKeySize = minimumBy (compare `on` snd) normalizedDistances
+	let cipherBlocks = chunksOfBS (fst bestKeySize) cipher
+	let transposedBlocks = transposeBlocks (fst bestKeySize) cipherBlocks
+	let lineAnalyzedStrings = map (\s -> findOneXorEncryptedEnglishSentence s) transposedBlocks
+	let keyCharacters = L.delete 0 $ map keyConstructor lineAnalyzedStrings
+	let finalKey = BS.pack $ keyCharacters
+	let !decipheredText = getStringXoredWithRepeatedKey cipher finalKey
+
+	putStrLn "Matasano Set 1 Challenge 6."
+	putStr "Encryption key: " 
+	BSC.putStrLn $ finalKey
+	putStrLn "Decrypted Message: "
+	BSC.putStrLn $ decipheredText
+	putStrLn ""
+
+
 main = do
 	set1Challenge1
 	set1Challenge2
 	set1Challenge3
-	--set1Challenge4
+	set1Challenge4
 	set1Challenge5
+	set1Challenge6
 
 
 
