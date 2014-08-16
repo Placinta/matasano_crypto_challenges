@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, BangPatterns #-}
 
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.ByteString.Internal as BS (c2w, w2c)
@@ -11,8 +11,10 @@ import Control.Monad
 import qualified Data.Map.Strict as M
 import Data.Word
 import Data.Maybe
-import Data.List (maximumBy)
+import Data.List (maximumBy, minimumBy)
 import Data.Function (on)
+import Debug.Trace
+import System.IO
 
 set1Challenge1HexString = "49276d206b696c6c696e6720796f757220627261696e206c696b65206120706f69736f6e6f7573206d757368726f6f6d"
 base64Table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -27,9 +29,6 @@ convertAndShowHexToBase64 hexString = do
 	putStr "Base64 encoded string: "
 	BSC.putStrLn $ hexToBase64 hexString
 	putStrLn ""
-	--putStr "Secret: "
-	--let Right secret = B64.decode $ hexString  
-	--BSC.putStrLn secret
 set1Challenge1 = convertAndShowHexToBase64 set1Challenge1HexString
 
 
@@ -53,7 +52,7 @@ set1Challenge2 = do
 
 
 
-replicateCharN length char = BS.replicate length $ fromIntegral $ ord char
+replicateCharN length char = BS.replicate length $ fromIntegral char
 
 createXorKey originalString repeatedLetter = replicateCharN (BS.length originalString) repeatedLetter
 displayXorString s = BSC.putStrLn s 
@@ -76,51 +75,90 @@ listOfCharsAndFreqsToWordsAndFreqs l = map helper l
 frequencySum = foldl f 0 (listOfCharsAndFreqsToWordsAndFreqs letterFrequencyForEnglish)
 	where f acc (_, c) = acc + c
 
+-- Returns a map of character => count values.
 computeStringLetterFrequency string = BS.foldl freqHelper M.empty string
 	where freqHelper freqCounter character = M.insertWith (+) character 1 freqCounter 
 
--- Return a higher score for common chars other than english letters, and a negative one for less frequently used symbols.
 letterScoreAdditionalAdjustments letter maybeLetterScore = 
 	case maybeLetterScore of 
 		Just letterScore -> letterScore
 		Nothing -> case BS.w2c letter of
-			' ' -> 1
-			'\'' -> 1
-			_ -> -1 
+			' ' -> -10
+			'\'' -> 0
+			_ -> 0
+
+-- Returns a score of 20, for all non english chars.
+nonEnglishLetterScore letter maybeLetterScore =
+	case maybeLetterScore of 
+		Just letterScore -> 0
+		Nothing -> 20
+
 
 -- Computes the score for a given string, how much it looks like an English sentence,
 -- by doing simple linear regression of count of letters found in string, multiplied by the letter frequency.
-englishScore sentence = M.foldrWithKey letterScore 0 stringLetterFrequency 
+englishScore :: BS.ByteString -> Double
+englishScore sentence = letterScoreTotal - (3 * wordsCount) + nonLetterScore
 	where 
-		letterScore char frequency acc = acc + (englishLetterFrequency char) * frequency
-		stringLetterFrequency = computeStringLetterFrequency sentence
-		englishLetterFrequency l = letterScoreAdditionalAdjustments l (M.lookup l englishLetterFrequencyMap)
+		-- Computes total score for all letters by adding up the score for each letter.
+		letterScoreTotal = M.foldrWithKey letterScoreHelper 0 relativeFrequency
 
+		-- Counts the number of words in the sentence.
+		wordsCount = fromIntegral $ length $ BS.split (BS.c2w ' ') sentence
+		
+		-- Computes the score for one English letter (no non-letters).
+		letterScoreHelper char relFrequency acc = if relFrequency > 0
+			then acc + sqrt ((relFrequency - (englishLetterFrequency char)) ** 2)
+			else acc
+		
+		-- Computes the score for each non-letter symbol.
+		nonLetterScore = M.foldrWithKey (\char count acc -> acc + (nonEnglishLetterScore char (M.lookup char englishLetterFrequencyMap)) * count) 0 stringLetterFrequency
+		
+		-- Computes the relative frequency of a letter in a sentence.
+		relativeFrequency =	M.foldrWithKey (\letter count acc -> M.insert letter (100.0 * count / letterCount) acc) M.empty stringLetterFrequency
+
+		-- Counts the number of letters in a string, and their count.
+		stringLetterFrequency = computeStringLetterFrequency sentence
+
+		-- Given a letter, returns the score for how probable that letter is to appear in the English language, with small adjustments.
+		englishLetterFrequency l = letterScoreAdditionalAdjustments (lowerCaseLetter l) (M.lookup l englishLetterFrequencyMap)
+		
+		letterCount = fromIntegral $ BS.length sentence
+		lowerCaseLetter l = BS.c2w $ toLower $ BS.w2c l
+
+-- Simple constructor that returns an analyzed string with its score computed.
 getEnglishScoresOfString (AnalyzedString sentence _ key) = AnalyzedString sentence (englishScore sentence) key
-findMostProbablyEnglishSentence listOfScoresAndStrings = maximumBy (compare `on` getAnalyzedStringScore) listOfScoresAndStrings
+
+-- Find the AnalyzedString that has the lowest score (which means it's the most probably English sentence).
+findMostProbablyEnglishSentence listOfScoresAndStrings = minimumBy (compare `on` getAnalyzedStringScore) listOfScoresAndStrings
 
 -- The initial hex string xored with a secret key
 set1Challenge3String = hexToBS "1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736"
-set1Challenge3StringXoredWithKey repeatLetter = AnalyzedString xoredString 0 createdXorKey
+
+-- Returns an AnalyzedString that contains a string xored with the original given string, and a key of length(originalString) of the given character.
+getStringXoredWithLetterKey string repeatLetter = AnalyzedString xoredString 0 createdXorKey
 	where
-		xoredString =  xorTwoByteStrings set1Challenge3String createdXorKey
-		createdXorKey = createXorKey set1Challenge3String repeatLetter
+		xoredString = xorTwoByteStrings string createdXorKey
+		createdXorKey = createXorKey string repeatLetter
 
 data AnalyzedString a = AnalyzedString {
 	string :: a,
 	score :: Double,
 	key :: a
-}
+} deriving Show
 
 getAnalyzedStringScore (AnalyzedString _ s _) = s
 getAnalyzedStringSentence (AnalyzedString s _ _) = s
 getAnalyzedStringKey (AnalyzedString _ _ s) = s
 
+-- Given a string, tries to xor it with all homogenous character keys, and return the one that looks like English.
+findOneXorEncryptedEnglishSentence string = findMostProbablyEnglishSentence listOfScoresAndStringsAndKeys
+	where
+		charactersToXorWith = [1..255]
+		xoredStringsAndKeys = map (getStringXoredWithLetterKey string) charactersToXorWith
+		listOfScoresAndStringsAndKeys = map getEnglishScoresOfString xoredStringsAndKeys
+
 set1Challenge3 = do
-	let charactersToXorWith = ['a'..'z'] ++ ['A'..'Z']
-	let xoredStringsAndKeys = map set1Challenge3StringXoredWithKey charactersToXorWith
-	let listOfScoresAndStringsAndKeys = map getEnglishScoresOfString xoredStringsAndKeys
-	let mostProbableEnglishSentence = findMostProbablyEnglishSentence listOfScoresAndStringsAndKeys
+	let mostProbableEnglishSentence = findOneXorEncryptedEnglishSentence set1Challenge3String
 	--mapM_ (\e -> putStrLn $ show e) listOfScoresAndStrings
 	putStrLn "Matasano Set 1 Challenge 3."
 	putStr "Given encrypted string: "
@@ -129,11 +167,25 @@ set1Challenge3 = do
 	BSC.putStrLn $ getAnalyzedStringSentence mostProbableEnglishSentence
 	putStr "Decrypted with key: "
 	BSC.putStrLn $ getAnalyzedStringKey mostProbableEnglishSentence
+	putStrLn ""
+
+set1Challenge4 = do
+	fileContents <- BS.readFile "4.txt"
+	let strings = map hexToBS $ BS.split (BS.c2w '\n') fileContents
+	let lineAnalyzedStrings = map (\s -> findOneXorEncryptedEnglishSentence s) strings
+	let !finalSentence = findMostProbablyEnglishSentence lineAnalyzedStrings
+	putStrLn "Matasano Set 1 Challenge 4."
+	putStr "Decrypted message: " 
+	BSC.putStrLn $ getAnalyzedStringSentence finalSentence
+	putStr "Decrypted with key: "
+	BSC.putStrLn $ getAnalyzedStringKey finalSentence
+
 
 main = do
 	set1Challenge1
 	set1Challenge2
 	set1Challenge3
+	set1Challenge4
 
 
 
